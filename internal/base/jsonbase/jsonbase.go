@@ -1,13 +1,13 @@
 package jsonbase
 
 type IJsonBase interface {
-	SetJsonID(string)
+	SetJsonID(int64)
 }
 
 type JsonBase struct {
-	JosnID string
+	JosnID int64
 }
 
-func (j *JsonBase) SetJsonID(id string) {
+func (j *JsonBase) SetJsonID(id int64) {
 	j.JosnID = id
 }

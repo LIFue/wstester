@@ -12,8 +12,6 @@ import (
 	"sync"
 	"wstester/internal/base/jsonbase"
 	"wstester/pkg/log"
-
-	"github.com/google/uuid"
 )
 
 var errMissingParams = errors.New("jsonrpc: request body missing params")
@@ -35,12 +33,11 @@ type serverCodec struct {
 	mutex   sync.Mutex // protects seq, pending
 	seq     uint64
 	pending map[uint64]*json.RawMessage
-	id      string
+	id      int64
 }
 
 // NewServerCodec returns a new rpc.ServerCodec using JSON-RPC on conn.
-func NewServerCodec(conn io.ReadWriteCloser) rpc.ServerCodec {
-	id := uuid.New().String()
+func NewServerCodec(id int64, conn io.ReadWriteCloser) rpc.ServerCodec {
 	return &serverCodec{
 		dec:     json.NewDecoder(conn),
 		enc:     json.NewEncoder(conn),
@@ -145,6 +142,6 @@ func (c *serverCodec) Close() error {
 // ServeConn runs the JSON-RPC server on a single connection.
 // ServeConn blocks, serving the connection until the client hangs up.
 // The caller typically invokes ServeConn in a go statement.
-func ServeConn(conn io.ReadWriteCloser) {
-	rpc.ServeCodec(NewServerCodec(conn))
-}
+// func ServeConn(conn io.ReadWriteCloser) {
+// 	rpc.ServeCodec(NewServerCodec(conn))
+// }

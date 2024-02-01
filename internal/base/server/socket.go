@@ -13,6 +13,7 @@ func NewWebSocketServer(
 	arith *controller.Arith,
 	messageController *controller.Message,
 	controllerRegister *controller.ControllerRegister,
+	wsManager ws.WsManager,
 ) *gin.Engine {
 	r := gin.Default()
 	r.Use(middleware.CORSMiddleware())
@@ -24,10 +25,14 @@ func NewWebSocketServer(
 		return nil
 	}
 	r.GET("/ws", func(ctx *gin.Context) {
-		wsServer := ws.NewWsServer()
-		wsServer.InitServerByGinContext(ctx)
+		if err := wsManager.UpgradeHttpToWsAndServer(ctx.Writer, ctx.Request); err != nil {
+			ctx.JSON(500, gin.H{
+				"result": "failed",
+				"error":  err.Error(),
+			})
+		}
 
-		wsServer.Serve()
+		ctx.JSON(200, gin.H{"result": "success"})
 	})
 
 	return r
