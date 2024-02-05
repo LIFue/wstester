@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"wstester/internal/base/code"
 	"wstester/internal/base/encrypt"
+	"wstester/internal/base/ws"
 	"wstester/internal/entity"
 	"wstester/internal/repo/platform"
 	"wstester/internal/service/login"
@@ -20,6 +21,8 @@ type PlatformService struct {
 	userService    *user.UserService
 	messageService *message.MessageService
 	encrypt        *encrypt.Encrypt
+
+	wsMessage *ws.WsManager
 }
 
 func NewPlatformService(
@@ -92,11 +95,14 @@ func (p *PlatformService) GetPlatformList(platformInfo *entity.Platform, pageInd
 	return p.platformRepo.QueryPlatformList(platformInfo, pageIndex, pageSize)
 }
 
-func (p *PlatformService) SendMessage(wsId string, message entity.MessageEntity) (string, error) {
+func (p *PlatformService) SendMessage(wsId int64, message entity.MessageEntity) (string, error) {
 	go func() {
 		if err := p.messageService.UpdateMessage(&message); err != nil {
 			log.Errorf("update message info error: %s", err.Error())
 		}
 	}()
-	return p.videoService.SendMessage(wsId, message.Message)
+	// return p.videoService.SendMessage(wsId, message.Message)
+
+	p.wsMessage.SendMessage(wsId, message.Message)
+	return "", nil
 }

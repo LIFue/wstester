@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"sync"
+	"wstester/internal/base/code"
 	"wstester/pkg/id"
 	"wstester/pkg/log"
 
@@ -109,13 +110,6 @@ func (m *WsManager) fetchResultChannel() chan []byte {
 	return make(chan []byte)
 }
 
-func (m *WsManager) listenResponse() {
-	// clientListenCount := make(map[string]int)
-	// for _, wsClient := range m.notifyListenCh {
-
-	// }
-}
-
 func (m *WsManager) createWsServer() *WsServer {
 	id := m.serverIDGenerator.GetID()
 	ws := newWsServer(id)
@@ -142,36 +136,30 @@ func (m *WsManager) UpgradeHttpToWsAndServer(w http.ResponseWriter, r *http.Requ
 }
 
 func (m *WsManager) SendMessage(serverID int64, rawMessage string) error {
-	message := struct {
-		ID     int64       `json:"id"`
-		Method string      `json:"method"`
-		Params interface{} `json:"params"`
-	}{}
-
+	message := make(map[string]interface{})
 	if err := json.Unmarshal([]byte(rawMessage), &message); err != nil {
-		return err
+		log.Errorf("unmarshal message: %s error: %s", rawMessage, err.Error())
+		return code.ERR_JSON_ERROR
 	}
 
-	message.ID = m.msgIDGenerator.GetID()
+	id := m.msgIDGenerator.GetID()
+	message["id"] = id
 	msgBytes, err := json.Marshal(message)
 	if err != nil {
-		return err
+		log.Errorf("marshal message: %v error: %s", message, err.Error())
+		return code.ERR_JSON_ERROR
 	}
 
 	clientID, exist := m.serverClientMap[serverID]
 	if !exist {
-		return errors.Errorf("login first")
+		return code.ERR_NOT_LOGIN
 	}
 
 	wc, exist := m.clientPool[clientID]
 	if !exist {
-		return errors.Errorf("login first")
+		return code.ERR_NOT_LOGIN
 	}
 
 	wc.WriteMessage(msgBytes)
 	return nil
-}
-
-func (m *WsManager) registerMessge(msgID int64) {
-
 }
