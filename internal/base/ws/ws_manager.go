@@ -28,6 +28,12 @@ type WsManager struct {
 	serverPoolLoker sync.Mutex
 
 	serverClientMap map[int64]int64
+
+	serverResp     map[int64]chan []byte
+	serverRespLock sync.Mutex
+
+	serverMessage     map[int64]int64
+	serverMessageLock sync.Mutex
 }
 
 func NewWsManager() *WsManager {
@@ -37,7 +43,9 @@ func NewWsManager() *WsManager {
 		messageResultChMap: make(map[int]chan []byte),
 		notifyListenCh:     make(chan *WsClient),
 
-		serverPool: make(map[int64]*WsServer),
+		serverPool:    make(map[int64]*WsServer),
+		serverResp:    make(map[int64]chan []byte),
+		serverMessage: make(map[int64]int64),
 	}
 }
 
@@ -149,6 +157,9 @@ func (m *WsManager) SendMessage(serverID int64, rawMessage string) error {
 		log.Errorf("marshal message: %v error: %s", message, err.Error())
 		return code.ERR_JSON_ERROR
 	}
+	m.serverMessageLock.Lock()
+	m.serverMessage[id] = serverID
+	m.serverMessageLock.Unlock()
 
 	clientID, exist := m.serverClientMap[serverID]
 	if !exist {
@@ -160,6 +171,16 @@ func (m *WsManager) SendMessage(serverID int64, rawMessage string) error {
 		return code.ERR_NOT_LOGIN
 	}
 
-	wc.WriteMessage(msgBytes)
+	if err := wc.WriteMessage(msgBytes); err != nil {
+		return err
+	}
+
+	if _, exist := m.serverResp[serverID]; !exist {
+		respCh := make(chan []byte)
+		m.serverRespLock.Lock()
+		m.serverResp[serverID] = respCh
+		m.serverRespLock.Unlock()
+	}
+
 	return nil
 }
