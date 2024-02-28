@@ -7,7 +7,7 @@ DIR_SRC=.
 GO_ENV=CGO_ENABLE=1 GO111MODULE=on
 GO=$(GO_ENV) $(shell which go)
 
-build: generate
+build:
 	@$(GO) build -o $(BIN) $(DIR_SRC)
 
 generate:

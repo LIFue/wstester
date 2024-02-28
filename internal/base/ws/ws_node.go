@@ -56,7 +56,7 @@ func (node *wsNode) ConnectWsServer(url string, requestHeaders http.Header) erro
 		log.Errorf("connect to web socket server error: %s", err.Error())
 		return err
 	}
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != 200 && resp.StatusCode != 101 {
 		log.Errorf("connect to web socket server error, response status is wrong, status code: %d", resp.StatusCode)
 		return errors.New("response status is wrong")
 	}
@@ -89,6 +89,7 @@ func (node *wsNode) Write(p []byte) (n int, err error) {
 	node.writeLocker.Lock()
 	defer node.writeLocker.Unlock()
 
+	log.Infof("node send message: %s", string(p))
 	err = node.conn.WriteMessage(websocket.TextMessage, p)
 	n = len(p)
 	return
@@ -108,4 +109,13 @@ func (node *wsNode) Close() error {
 
 func (node *wsNode) Valid() bool {
 	return node.connected && node.conn != nil
+}
+
+func (node *wsNode) ReadMessage() ([]byte, error) {
+	if !node.Valid() {
+		return nil, errors.New("web socket connection is closed")
+	}
+
+	_, readBytes, err := node.conn.ReadMessage()
+	return readBytes, err
 }

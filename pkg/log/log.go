@@ -11,7 +11,7 @@ import (
 var logger *zap.Logger
 
 func init() {
-	core := zapcore.NewCore(zapcore.NewJSONEncoder(zap.NewProductionEncoderConfig()), zapcore.AddSync(os.Stdout), zap.NewAtomicLevel())
+	core := zapcore.NewCore(zapcore.NewConsoleEncoder(zap.NewProductionEncoderConfig()), zapcore.AddSync(os.Stdout), zap.NewAtomicLevel())
 	logger = zap.New(core)
 	defer logger.Sync()
 }

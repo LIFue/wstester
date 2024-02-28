@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"os"
 	"os/signal"
 
@@ -33,7 +34,8 @@ func runWsServer(cmd *cobra.Command, args []string) {
 	}
 
 	log.Infof("allconfig: %+v", allConfig)
-	r, err := InitializeWsServer(allConfig.Debug, allConfig.Data.Database)
+	ctx, cancleFunc := context.WithCancel(context.Background())
+	r, err := InitializeWsServer(allConfig.Debug, ctx, allConfig.Data.Database)
 	if err != nil {
 		panic(err)
 	}
@@ -46,6 +48,7 @@ func runWsServer(cmd *cobra.Command, args []string) {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, os.Interrupt)
 	for range quit {
+		cancleFunc()
 		log.Info("end...")
 		return
 	}

@@ -3,11 +3,11 @@ package ws
 import (
 	"context"
 	"sync"
-	"time"
 	"wstester/pkg/log"
 )
 
 type WsClient struct {
+	id   string
 	node *wsNode
 	url  string
 
@@ -21,8 +21,9 @@ type WsClient struct {
 	dataResponse chan []byte
 }
 
-func NewWsClient(url string) *WsClient {
+func NewWsClient(id string, url string) *WsClient {
 	return &WsClient{
+		id:             id,
 		node:           NewWsNode(),
 		url:            url,
 		buf:            make([]byte, 8092),
@@ -36,38 +37,13 @@ func (client *WsClient) ConnectToServer() error {
 		log.Errorf("connect to server error: %s", err.Error())
 		return err
 	}
-	ctx, cancleFunc := context.WithCancel(client.ctx)
-	client.KeepAlive(ctx)
-	client.cancleFuncList = append(client.cancleFuncList, cancleFunc)
+	// ctx, cancleFunc := context.WithCancel(client.ctx)
+	// client.cancleFuncList = append(client.cancleFuncList, cancleFunc)
 	return nil
 }
 
-func (client *WsClient) KeepAlive(ctx context.Context) error {
-	t := time.NewTicker(50 * time.Second)
-	keepaliveMsg := `{"method":"general.keeplive","params":{"expires":60,"date":"2024-02-26 19:59:33"}}`
-	for {
-		select {
-		case <-t.C:
-			if err := client.WriteMessage([]byte(keepaliveMsg)); err != nil {
-				log.Errorf("keepalive error: send message error: %s", err.Error())
-				return err
-			}
-		case <-ctx.Done():
-			log.Info("stop keepAlive")
-			return nil
-		}
-	}
-}
-
-func (client *WsClient) SendMessage(msg string) (resp string, err error) {
-	if err = client.WriteMessage([]byte(msg)); err != nil {
-		return
-	}
-
-	return
-}
-
 func (client *WsClient) WriteMessage(msg []byte) error {
+	log.Infof("client: %s send message: %s", client.id, string(msg))
 	client.mu.Lock()
 	defer client.mu.Unlock()
 	_, err := client.node.Write(msg)
@@ -75,12 +51,11 @@ func (client *WsClient) WriteMessage(msg []byte) error {
 }
 
 func (client *WsClient) ReadMessage() ([]byte, error) {
-	for {
-		resp := make([]byte, 8092)
-		n, err := client.node.Read(resp)
-		if err != nil {
-			return nil, err
-		}
-		client.dataResponse <- resp[:n]
+	resp, err := client.node.ReadMessage()
+	if err != nil {
+		return nil, err
 	}
+	log.Infof("client resp: %s", string(resp))
+	// client.dataResponse <- resp[:n]
+	return resp, nil
 }

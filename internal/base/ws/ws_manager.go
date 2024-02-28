@@ -1,9 +1,12 @@
 package ws
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"sync"
+	"time"
 	"wstester/internal/base/code"
 	"wstester/pkg/id"
 	"wstester/pkg/log"
@@ -12,81 +15,148 @@ import (
 )
 
 type WsManager struct {
-	clientPoolLocker sync.Mutex
-	clientPool       map[int64]*WsClient
-
-	resultChStack      []chan []byte
-	messageResultChMap map[int]chan []byte
-	notifyListenCh     chan *WsClient
-
 	//id generator
 	serverIDGenerator id.IDGenerator
 	msgIDGenerator    id.IDGenerator
 
 	//----------------------------------------
-	serverPool      map[int64]*WsServer
-	serverPoolLoker sync.Mutex
-
-	serverClientMap map[int64]int64
+	// serverPool      map[int64]*WsServer
+	// serverPoolLoker sync.Mutex
 
 	serverResp     map[int64]chan []byte
 	serverRespLock sync.Mutex
 
-	serverMessage     map[int64]int64
-	serverMessageLock sync.Mutex
+	serverMessage       map[int64]int64
+	serverMessageLock   sync.Mutex
+	serverLastUseTs     map[int64]int64
+	serverLastUseTsLock sync.Mutex
+
+	clientMap            map[string]*WsClient
+	clientMapLock        sync.Mutex
+	serverClientMap      map[int64]string
+	serverClientMapLock  sync.Mutex
+	keepaliveClient      map[int64]string
+	keepaliveClientLock  sync.Mutex
+	clientLastSendTs     map[string]int64
+	clientLastSendTsLock sync.Mutex
+
+	ctx context.Context
 }
 
-func NewWsManager() *WsManager {
-	return &WsManager{
-		clientPool:         make(map[int64]*WsClient),
-		resultChStack:      make([]chan []byte, 0),
-		messageResultChMap: make(map[int]chan []byte),
-		notifyListenCh:     make(chan *WsClient),
+func NewWsManager(ctx context.Context) *WsManager {
+	m := &WsManager{
+		// serverPool:    make(map[int64]*WsServer),
+		serverResp:      make(map[int64]chan []byte),
+		serverMessage:   make(map[int64]int64),
+		serverLastUseTs: make(map[int64]int64, 0),
 
-		serverPool:    make(map[int64]*WsServer),
-		serverResp:    make(map[int64]chan []byte),
-		serverMessage: make(map[int64]int64),
+		clientMap:        make(map[string]*WsClient),
+		serverClientMap:  make(map[int64]string),
+		keepaliveClient:  make(map[int64]string),
+		clientLastSendTs: make(map[string]int64),
+
+		ctx: ctx,
 	}
+	go m.keepAlive()
+	go m.checkUnusedClient()
+	return m
 }
 
-func (m *WsManager) InitAndRegisterClient(platformID int64, wsUrl string) error {
-	wsCli := NewWsClient(wsUrl)
-	if err := wsCli.ConnectToServer(); err != nil {
-		return err
+func (m *WsManager) InitAndRegisterClient(serverID int64, platformID string, wsUrl string) error {
+	// var wsCli *WsClient
+	// var exist bool
+	log.Infof("m.clientMap: %+v", m.clientMap)
+	if _, exist := m.clientMap[platformID]; !exist {
+		wsCli := NewWsClient(platformID, wsUrl)
+		if err := wsCli.ConnectToServer(); err != nil {
+			return err
+		}
+		log.Infof("add to map , lock")
+		m.clientMapLock.Lock()
+		m.clientMap[platformID] = wsCli
+		m.clientMapLock.Unlock()
+		log.Infof("add to map , unlock")
+		go m.readMessage(wsCli)
 	}
 
-	m.clientPoolLocker.Lock()
-	defer m.clientPoolLocker.Unlock()
-	m.clientPool[platformID] = wsCli
+	m.serverClientMapLock.Lock()
+	m.serverClientMap[serverID] = platformID
+	m.serverClientMapLock.Unlock()
+
 	return nil
 }
 
-func (m *WsManager) FetchPlatformClient(platformID int64) (*WsClient, bool) {
-	wsCli, exist := m.clientPool[platformID]
-	return wsCli, exist
+func (m *WsManager) checkUnusedClient() {
+	t := time.NewTicker(1 * time.Minute)
+	for {
+		select {
+		case <-t.C:
+			expireClients := make([]string, 0)
+			for clientID, ts := range m.clientLastSendTs {
+				if time.Now().Add(-5*time.Minute).Unix() > ts {
+					expireClients = append(expireClients, clientID)
+					m.clientMapLock.Lock()
+					delete(m.clientMap, clientID)
+					m.clientMapLock.Unlock()
+				}
+			}
+			for _, clientID := range expireClients {
+				delete(m.clientLastSendTs, clientID)
+			}
+		}
+	}
 }
 
-func (m *WsManager) SendMessageToPlatform(platformID int64, msg []byte) (resultCh chan []byte, err error) {
-	var msgID int
-	wsCli, exist := m.clientPool[platformID]
-	if !exist {
-		err = errors.New("login first")
-		return
-	}
+func (m *WsManager) checkUnuserdServer() {
 
-	resultCh = m.fetchResultChannel()
-	msgID, err = m.resolveMessageID(msg)
-	if err != nil {
-		return
-	}
-	m.rememberMessageResultCh(msgID, resultCh)
+}
 
-	err = wsCli.WriteMessage(msg)
-	if err != nil {
-		return
-	}
+func (m *WsManager) keepAlive() {
+	t := time.NewTicker(30 * time.Second)
+	keepaliveMsg := `{"id": %s,"method":"general.keeplive","params":{"expires":60,"date":"2024-02-26 19:59:33"}}`
+	for {
+		select {
+		case <-t.C:
+			for _, clientID := range m.keepaliveClient {
+				if client, exist := m.clientMap[clientID]; exist {
+					m.clientMapLock.Lock()
+					client.node.conn.Close()
+					delete(m.clientMap, clientID)
+					m.clientMapLock.Unlock()
+				}
 
-	return
+			}
+			if len(m.keepaliveClient) > 0 {
+				m.keepaliveClient = make(map[int64]string)
+			}
+			for _, client := range m.clientMap {
+				go func(wsClient *WsClient) {
+					if wsClient == nil || !wsClient.node.connected {
+						m.clientMapLock.Lock()
+						delete(m.clientMap, wsClient.id)
+						m.clientMapLock.Unlock()
+						return
+					}
+					msgID := m.msgIDGenerator.GetID()
+					keepaliveMsg = fmt.Sprintf(keepaliveMsg, msgID)
+					if err := wsClient.WriteMessage([]byte(keepaliveMsg)); err != nil {
+						log.Errorf("client: %s keepalive error: %s", wsClient.id, err.Error())
+						m.clientMapLock.Lock()
+						delete(m.clientMap, wsClient.id)
+						m.clientMapLock.Unlock()
+						return
+					}
+
+					m.keepaliveClientLock.Lock()
+					m.keepaliveClient[msgID] = wsClient.id
+					m.keepaliveClientLock.Unlock()
+				}(client)
+			}
+		case <-m.ctx.Done():
+			log.Info("stop keepAlive")
+			return
+		}
+	}
 }
 
 func (m *WsManager) resolveMessageID(msg []byte) (int, error) {
@@ -106,26 +176,14 @@ func (m *WsManager) resolveMessageID(msg []byte) (int, error) {
 	return temp.ID, nil
 }
 
-func (m *WsManager) rememberMessageResultCh(msgID int, ch chan []byte) {
-	m.messageResultChMap[msgID] = ch
-}
-
-func (m *WsManager) fetchResultChannel() chan []byte {
-	for len(m.resultChStack) > 0 {
-		return m.resultChStack[len(m.resultChStack)-1]
-	}
-
-	return make(chan []byte)
-}
-
 func (m *WsManager) createWsServer() *WsServer {
 	id := m.serverIDGenerator.GetID()
 	ws := newWsServer(id)
 
-	m.serverPoolLoker.Lock()
-	defer m.serverPoolLoker.Unlock()
+	// m.serverPoolLoker.Lock()
+	// defer m.serverPoolLoker.Unlock()
 
-	m.serverPool[id] = ws
+	// m.serverPool[id] = ws
 	return ws
 }
 
@@ -143,11 +201,13 @@ func (m *WsManager) UpgradeHttpToWsAndServer(w http.ResponseWriter, r *http.Requ
 	return nil
 }
 
-func (m *WsManager) SendMessage(serverID int64, rawMessage string) error {
+func (m *WsManager) SendMessage(serverID int64, rawMessage string) (chan []byte, error) {
+
+	log.Infof("send message : %s", rawMessage)
 	message := make(map[string]interface{})
 	if err := json.Unmarshal([]byte(rawMessage), &message); err != nil {
 		log.Errorf("unmarshal message: %s error: %s", rawMessage, err.Error())
-		return code.ERR_JSON_ERROR
+		return nil, code.ERR_JSON_ERROR
 	}
 
 	id := m.msgIDGenerator.GetID()
@@ -155,7 +215,7 @@ func (m *WsManager) SendMessage(serverID int64, rawMessage string) error {
 	msgBytes, err := json.Marshal(message)
 	if err != nil {
 		log.Errorf("marshal message: %v error: %s", message, err.Error())
-		return code.ERR_JSON_ERROR
+		return nil, code.ERR_JSON_ERROR
 	}
 	m.serverMessageLock.Lock()
 	m.serverMessage[id] = serverID
@@ -163,24 +223,60 @@ func (m *WsManager) SendMessage(serverID int64, rawMessage string) error {
 
 	clientID, exist := m.serverClientMap[serverID]
 	if !exist {
-		return code.ERR_NOT_LOGIN
+		return nil, code.ERR_NOT_LOGIN
 	}
 
-	wc, exist := m.clientPool[clientID]
+	wc, exist := m.clientMap[clientID]
 	if !exist {
-		return code.ERR_NOT_LOGIN
+		return nil, code.ERR_NOT_LOGIN
 	}
 
 	if err := wc.WriteMessage(msgBytes); err != nil {
-		return err
+		log.Errorf("client send message error: %s", err.Error())
+		return nil, err
 	}
-
-	if _, exist := m.serverResp[serverID]; !exist {
-		respCh := make(chan []byte)
+	var respCh chan []byte
+	if respCh, exist = m.serverResp[serverID]; !exist {
+		respCh = make(chan []byte)
 		m.serverRespLock.Lock()
 		m.serverResp[serverID] = respCh
 		m.serverRespLock.Unlock()
 	}
 
-	return nil
+	m.clientLastSendTsLock.Lock()
+	m.clientLastSendTs[clientID] = time.Now().Unix()
+	m.clientLastSendTsLock.Unlock()
+	return respCh, nil
+}
+
+func (m *WsManager) readMessage(ws *WsClient) {
+	for {
+		readBytes, err := ws.ReadMessage()
+		if err != nil {
+			return
+		}
+
+		go func() {
+			msgID, err := m.resolveMessageID(readBytes)
+			if err != nil {
+				return
+			}
+
+			log.Infof("read msg id: %d", msgID)
+
+			serverID, exist := m.serverMessage[int64(msgID)]
+			if !exist {
+				return
+			}
+
+			log.Infof("serverID: %d", serverID)
+			serverCh, exist := m.serverResp[serverID]
+			log.Infof("exist: %v serverCh: %+v", exist, serverCh)
+			if !exist {
+				return
+			}
+			serverCh <- readBytes
+			log.Infof("response: %s", string(readBytes))
+		}()
+	}
 }

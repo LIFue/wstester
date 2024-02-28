@@ -22,10 +22,10 @@ func (p *Platform) ConnectPlatform(req *schema.ReqConnectPlatform, resp *schema.
 	log.Infof("receive a request to connect to platform: %+v", req)
 	resp.Status = "success"
 
-	// err = p.platformService.ConnectToPlatform(req.JosnID, &req.Platform)
-	// if err != nil {
-	// 	resp.Status = "failed"
-	// }
+	err = p.platformService.ConnectToPlatform(req.JosnID, &req.Platform)
+	if err != nil {
+		resp.Status = "failed"
+	}
 
 	return err
 }

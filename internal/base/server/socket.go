@@ -13,7 +13,7 @@ func NewWebSocketServer(
 	arith *controller.Arith,
 	messageController *controller.Message,
 	controllerRegister *controller.ControllerRegister,
-	wsManager ws.WsManager,
+	wsManager *ws.WsManager,
 ) *gin.Engine {
 	r := gin.Default()
 	r.Use(middleware.CORSMiddleware())

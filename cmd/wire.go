@@ -4,6 +4,7 @@
 package cmd
 
 import (
+	"context"
 	"wstester/internal/base"
 	"wstester/internal/base/data"
 	"wstester/internal/base/server"
@@ -15,7 +16,7 @@ import (
 	"github.com/google/wire"
 )
 
-func InitializeWsServer(debug bool, dbConf *data.Database) (*gin.Engine, error) {
+func InitializeWsServer(debug bool, ctx context.Context, dbConf *data.Database) (*gin.Engine, error) {
 	wire.Build(
 		base.BaseSet,
 		repo.RepoSet,

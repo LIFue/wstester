@@ -1,11 +1,11 @@
 debug: true
 server:
   web_socket:
-    addr: 0.0.0.0:9091
+    addr: 0.0.0.0:9092
 data:
   database:
     driver: "mysql"
-    connection: "vroomdb:HitryVRoom123@tcp(10.35.149.26:30537)/lifue_test?charset=utf8&parseTime=true"
+    connection: "vroomdb:HitryVRoom123@tcp(10.35.149.26:30537)/wstest?charset=utf8&parseTime=true"
     conn_max_life_time: 1000
     max_open_conn: 10
     max_idle_conn: 10
