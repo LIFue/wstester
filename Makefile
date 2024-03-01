@@ -2,6 +2,11 @@
 
 VERSION=1.5.1
 GIT_VER=$(shell git rev-parse --short HEAD)
+GIT_BRANCH=$(shell git symbolic-ref --short HEAD)
+IMAGE_TAG="hub.hitry.io/test/wstester:v"$(GIT_VER)
+ifneq ($(GIT_BRANCH), "master")
+IMAGE_TAG :=$(IMAGE_TAG)-$(GIT_BRANCH)
+endif
 BIN=wstester
 DIR_SRC=.
 
@@ -22,7 +27,9 @@ generate:
 	@$(GO) mod tidy
 
 docker: build
-	@$(DOCKER) build -t hub.hitry.io/test/wstester:v$(GIT_VER) .
+	@$(DOCKER) build -t $(IMAGE_TAG) .
+	
+	@$(DOCKER) push $(IMAGE_TAG)
 
 clean: 
 	@$(GO) clean ./...

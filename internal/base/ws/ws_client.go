@@ -18,10 +18,10 @@ type WsClient struct {
 	ctx            context.Context
 	cancleFuncList []context.CancelFunc
 
-	dataResponse chan []byte
+	isPublic bool
 }
 
-func NewWsClient(id string, url string) *WsClient {
+func NewWsClient(id string, url string, isPublic bool) *WsClient {
 	return &WsClient{
 		id:             id,
 		node:           NewWsNode(),
@@ -29,11 +29,12 @@ func NewWsClient(id string, url string) *WsClient {
 		buf:            make([]byte, 8092),
 		ctx:            context.Background(),
 		cancleFuncList: make([]context.CancelFunc, 0),
+		isPublic:       isPublic,
 	}
 }
 
 func (client *WsClient) ConnectToServer() error {
-	if err := client.node.ConnectWsServer(client.url, nil); err != nil {
+	if err := client.node.ConnectWsServer(client.url, nil, client.isPublic); err != nil {
 		log.Errorf("connect to server error: %s", err.Error())
 		return err
 	}

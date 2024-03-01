@@ -42,7 +42,7 @@ func (l *LoginService) tryLogin(platform *entity.Platform) (string, error) {
 		User: platform.User.Uid,
 	}
 	//获取登录加密信息
-	authRequest := httputil.NewRequest(http.MethodPost, loginUrl, payload)
+	authRequest := httputil.NewRequest(http.MethodPost, loginUrl, payload, platform.IsPublic)
 	respLoginAuth := &schema.RespLoginAuth{}
 	if err := l.h.SendRequest(authRequest, respLoginAuth); err != nil {
 		log.Errorf("req login auth error: %s", err.Error())
@@ -58,7 +58,7 @@ func (l *LoginService) tryLogin(platform *entity.Platform) (string, error) {
 		User:     platform.User.Uid,
 		Password: loginPassword,
 	}
-	loginRequest := httputil.NewRequest(http.MethodPost, loginUrl, loginPayload)
+	loginRequest := httputil.NewRequest(http.MethodPost, loginUrl, loginPayload, platform.IsPublic)
 	loginResponse := &schema.RespLogin{}
 	if err := l.h.SendRequest(loginRequest, loginResponse); err != nil {
 		log.Errorf("req login error: %s", err.Error())

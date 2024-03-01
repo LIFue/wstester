@@ -3,6 +3,7 @@ package ws
 import (
 	"errors"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
@@ -44,14 +45,20 @@ func (node *wsNode) UpgradeHttp(w http.ResponseWriter, r *http.Request) (err err
 	return nil
 }
 
-func (node *wsNode) ConnectWsServer(url string, requestHeaders http.Header) error {
+func (node *wsNode) ConnectWsServer(wsUrl string, requestHeaders http.Header, isPublic bool) error {
 	var wsClient = websocket.Dialer{
 		ReadBufferSize:   1024,
 		WriteBufferSize:  1024,
 		HandshakeTimeout: 30 * time.Second,
 	}
 
-	conn, resp, err := wsClient.Dial(url, requestHeaders)
+	if isPublic {
+		wsClient.Proxy = func(r *http.Request) (*url.URL, error) {
+			return url.Parse("http://10.1.13.121:50061")
+		}
+	}
+
+	conn, resp, err := wsClient.Dial(wsUrl, requestHeaders)
 	if err != nil {
 		log.Errorf("connect to web socket server error: %s", err.Error())
 		return err

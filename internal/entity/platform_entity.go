@@ -9,9 +9,10 @@ import (
 
 type Platform struct {
 	gorm.Model
-	Ip   string `gorm:"index:idx_platform_ip_port" json:"ip"`
-	Port string `gorm:"index:idx_platform_ip_port" json:"port"`
-	User User   `json:"user"`
+	Ip       string `gorm:"index:idx_platform_ip_port" json:"ip"`
+	Port     string `gorm:"index:idx_platform_ip_port" json:"port"`
+	IsPublic bool   `json:"is_public"`
+	User     User   `json:"user"`
 }
 
 func (p *Platform) GenUri() string {

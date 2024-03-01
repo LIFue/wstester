@@ -2,6 +2,7 @@ package platform
 
 import (
 	"fmt"
+	"strings"
 	"time"
 	"wstester/internal/base/code"
 	"wstester/internal/base/encrypt"
@@ -55,12 +56,9 @@ func (p *PlatformService) ConnectToPlatform(serverID int64, platformInfo *entity
 			log.Errorf("add user error: %s", err.Error())
 		}
 	}()
-
-	log.Infof("")
-	// platformLoginSign := p.encrypt.Encode(code.EncryptCodeMD5, fmt.Sprintf("%s:%s", platformInfo.Ip, platformInfo.User.Uid))
-	// if p.videoService.IsPlatformLogined(serverID, platformLoginSign) {
-	// 	return nil
-	// }
+	if !strings.HasPrefix(platformInfo.Ip, "10.35") {
+		platformInfo.IsPublic = true
+	}
 	return p.connectToPlatform(serverID, platformInfo)
 }
 
@@ -77,9 +75,7 @@ func (p *PlatformService) connectToPlatform(wsId int64, platformInfo *entity.Pla
 	// }
 	platformID := fmt.Sprintf("ip:%s:uid:%s", platformInfo.Ip, platformInfo.User.Uid)
 
-	log.Infof("wsurl:  %s, platformID: %s", wsUrl, platformID)
-	log.Infof("p.wsManager: %+v", p.wsManager)
-	return p.wsManager.InitAndRegisterClient(wsId, platformID, wsUrl)
+	return p.wsManager.InitAndRegisterClient(wsId, platformID, wsUrl, platformInfo.IsPublic)
 }
 
 // 判断数据库是否存在一致的平台
@@ -112,7 +108,7 @@ func (p *PlatformService) SendMessage(wsId int64, message entity.MessageEntity) 
 	}()
 	// return p.videoService.SendMessage(wsId, message.Message)
 
-	c, err := p.wsManager.SendMessage(wsId, message.Message)
+	c, err := p.wsManager.SendMessage(wsId, "", message.Message)
 	if err != nil {
 		return "", err
 	}

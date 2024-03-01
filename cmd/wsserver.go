@@ -35,6 +35,7 @@ func runWsServer(cmd *cobra.Command, args []string) {
 
 	log.Infof("allconfig: %+v", allConfig)
 	ctx, cancleFunc := context.WithCancel(context.Background())
+	log.Infof("context")
 	r, err := InitializeWsServer(allConfig.Debug, ctx, allConfig.Data.Database)
 	if err != nil {
 		panic(err)

@@ -18,6 +18,7 @@ type Data struct {
 }
 
 func NewData(db *gorm.DB) (*Data, error) {
+	log.Info("init data")
 	if err := initTables(db); err != nil {
 		return nil, err
 	}
@@ -32,6 +33,7 @@ func initTables(db *gorm.DB) error {
 }
 
 func NewDB(debug bool, dbConf *Database) (db *gorm.DB, err error) {
+	log.Infof("init db")
 	if dbConf.Driver == "" {
 		dbConf.Driver = string(schema.MYSQL)
 	} else if dbConf.Driver == string(schema.SQLITE) {

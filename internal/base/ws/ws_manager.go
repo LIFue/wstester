@@ -25,6 +25,8 @@ type WsManager struct {
 
 	serverResp     map[int64]chan []byte
 	serverRespLock sync.Mutex
+	serverMap      map[int64]*WsServer
+	serverMapLock  sync.Mutex
 
 	serverMessage       map[int64]int64
 	serverMessageLock   sync.Mutex
@@ -35,39 +37,41 @@ type WsManager struct {
 	clientMapLock        sync.Mutex
 	serverClientMap      map[int64]string
 	serverClientMapLock  sync.Mutex
-	keepaliveClient      map[int64]string
-	keepaliveClientLock  sync.Mutex
 	clientLastSendTs     map[string]int64
 	clientLastSendTsLock sync.Mutex
 
-	ctx context.Context
+	ctx                   context.Context
+	managerTaskCtx        context.Context
+	managerTaskcancleFunc context.CancelFunc
 }
 
 func NewWsManager(ctx context.Context) *WsManager {
+	managerTaskCtx, managerTaskcancleFunc := context.WithCancel(ctx)
 	m := &WsManager{
 		// serverPool:    make(map[int64]*WsServer),
 		serverResp:      make(map[int64]chan []byte),
 		serverMessage:   make(map[int64]int64),
 		serverLastUseTs: make(map[int64]int64, 0),
+		serverMap:       make(map[int64]*WsServer),
 
 		clientMap:        make(map[string]*WsClient),
 		serverClientMap:  make(map[int64]string),
-		keepaliveClient:  make(map[int64]string),
 		clientLastSendTs: make(map[string]int64),
 
-		ctx: ctx,
+		ctx:                   ctx,
+		managerTaskCtx:        managerTaskCtx,
+		managerTaskcancleFunc: managerTaskcancleFunc,
 	}
-	go m.keepAlive()
-	go m.checkUnusedClient()
+	go m.managerTask()
 	return m
 }
 
-func (m *WsManager) InitAndRegisterClient(serverID int64, platformID string, wsUrl string) error {
+func (m *WsManager) InitAndRegisterClient(serverID int64, platformID string, wsUrl string, isPublic bool) error {
 	// var wsCli *WsClient
 	// var exist bool
 	log.Infof("m.clientMap: %+v", m.clientMap)
 	if _, exist := m.clientMap[platformID]; !exist {
-		wsCli := NewWsClient(platformID, wsUrl)
+		wsCli := NewWsClient(platformID, wsUrl, isPublic)
 		if err := wsCli.ConnectToServer(); err != nil {
 			return err
 		}
@@ -86,74 +90,17 @@ func (m *WsManager) InitAndRegisterClient(serverID int64, platformID string, wsU
 	return nil
 }
 
-func (m *WsManager) checkUnusedClient() {
+func (m *WsManager) managerTask() {
 	t := time.NewTicker(1 * time.Minute)
+	keepAlive := time.NewTicker(30 * time.Second)
 	for {
 		select {
 		case <-t.C:
-			expireClients := make([]string, 0)
-			for clientID, ts := range m.clientLastSendTs {
-				if time.Now().Add(-5*time.Minute).Unix() > ts {
-					expireClients = append(expireClients, clientID)
-					m.clientMapLock.Lock()
-					delete(m.clientMap, clientID)
-					m.clientMapLock.Unlock()
-				}
-			}
-			for _, clientID := range expireClients {
-				delete(m.clientLastSendTs, clientID)
-			}
-		}
-	}
-}
-
-func (m *WsManager) checkUnuserdServer() {
-
-}
-
-func (m *WsManager) keepAlive() {
-	t := time.NewTicker(30 * time.Second)
-	keepaliveMsg := `{"id": %s,"method":"general.keeplive","params":{"expires":60,"date":"2024-02-26 19:59:33"}}`
-	for {
-		select {
-		case <-t.C:
-			for _, clientID := range m.keepaliveClient {
-				if client, exist := m.clientMap[clientID]; exist {
-					m.clientMapLock.Lock()
-					client.node.conn.Close()
-					delete(m.clientMap, clientID)
-					m.clientMapLock.Unlock()
-				}
-
-			}
-			if len(m.keepaliveClient) > 0 {
-				m.keepaliveClient = make(map[int64]string)
-			}
-			for _, client := range m.clientMap {
-				go func(wsClient *WsClient) {
-					if wsClient == nil || !wsClient.node.connected {
-						m.clientMapLock.Lock()
-						delete(m.clientMap, wsClient.id)
-						m.clientMapLock.Unlock()
-						return
-					}
-					msgID := m.msgIDGenerator.GetID()
-					keepaliveMsg = fmt.Sprintf(keepaliveMsg, msgID)
-					if err := wsClient.WriteMessage([]byte(keepaliveMsg)); err != nil {
-						log.Errorf("client: %s keepalive error: %s", wsClient.id, err.Error())
-						m.clientMapLock.Lock()
-						delete(m.clientMap, wsClient.id)
-						m.clientMapLock.Unlock()
-						return
-					}
-
-					m.keepaliveClientLock.Lock()
-					m.keepaliveClient[msgID] = wsClient.id
-					m.keepaliveClientLock.Unlock()
-				}(client)
-			}
-		case <-m.ctx.Done():
-			log.Info("stop keepAlive")
+			go m.checkClientUsageAndDeleteUnused()
+			go m.checkServerUsageAndDeleteUnused()
+		case <-keepAlive.C:
+			go m.keepAlive()
+		case <-m.managerTaskCtx.Done():
 			return
 		}
 	}
@@ -176,24 +123,20 @@ func (m *WsManager) resolveMessageID(msg []byte) (int, error) {
 	return temp.ID, nil
 }
 
-func (m *WsManager) createWsServer() *WsServer {
-	id := m.serverIDGenerator.GetID()
-	ws := newWsServer(id)
-
-	// m.serverPoolLoker.Lock()
-	// defer m.serverPoolLoker.Unlock()
-
-	// m.serverPool[id] = ws
-	return ws
-}
-
 func (m *WsManager) UpgradeHttpToWsAndServer(w http.ResponseWriter, r *http.Request) error {
-	ws := m.createWsServer()
+	ws := newWsServer(m.serverIDGenerator.GetID())
 
 	if err := ws.node.UpgradeHttp(w, r); err != nil {
 		log.Errorf("upgrade http to websocket error: %s", err.Error())
 		return err
 	}
+
+	// ws.node.conn.SetPingHandler(func(appData string) error {
+	// 	m.serverLastUseTsLock.Lock()
+	// 	m.serverLastUseTs[ws.serverID] = time.Now().Unix()
+	// 	m.serverLastUseTsLock.Lock()
+	// 	return nil
+	// })
 
 	go func() {
 		ws.Serve()
@@ -201,7 +144,7 @@ func (m *WsManager) UpgradeHttpToWsAndServer(w http.ResponseWriter, r *http.Requ
 	return nil
 }
 
-func (m *WsManager) SendMessage(serverID int64, rawMessage string) (chan []byte, error) {
+func (m *WsManager) SendMessage(serverID int64, clientID, rawMessage string) (chan []byte, error) {
 
 	log.Infof("send message : %s", rawMessage)
 	message := make(map[string]interface{})
@@ -221,9 +164,12 @@ func (m *WsManager) SendMessage(serverID int64, rawMessage string) (chan []byte,
 	m.serverMessage[id] = serverID
 	m.serverMessageLock.Unlock()
 
-	clientID, exist := m.serverClientMap[serverID]
-	if !exist {
-		return nil, code.ERR_NOT_LOGIN
+	if clientID == "" {
+		var exist bool
+		clientID, exist = m.serverClientMap[serverID]
+		if !exist {
+			return nil, code.ERR_NOT_LOGIN
+		}
 	}
 
 	wc, exist := m.clientMap[clientID]
@@ -279,4 +225,111 @@ func (m *WsManager) readMessage(ws *WsClient) {
 			log.Infof("response: %s", string(readBytes))
 		}()
 	}
+}
+
+func (m *WsManager) checkClientUsageAndDeleteUnused() {
+	expireClients := make([]string, 0)
+	for clientID, ts := range m.clientLastSendTs {
+		if time.Now().Add(-5*time.Minute).Unix() > ts {
+			expireClients = append(expireClients, clientID)
+			if client, exist := m.clientMap[clientID]; exist {
+				client.node.Close()
+				m.clientMapLock.Lock()
+				delete(m.clientMap, clientID)
+				m.clientMapLock.Unlock()
+			}
+		}
+	}
+	notUsedClient := make([]string, 0)
+	for _, client := range m.clientMap {
+		if _, exist := m.clientLastSendTs[client.id]; !exist {
+			notUsedClient = append(notUsedClient, client.id)
+		}
+	}
+	for _, clientID := range expireClients {
+		delete(m.clientLastSendTs, clientID)
+	}
+	for _, clientID := range notUsedClient {
+		if client, exist := m.clientMap[clientID]; exist {
+			client.node.Close()
+			m.clientMapLock.Lock()
+			delete(m.clientMap, clientID)
+			m.clientMapLock.Unlock()
+		}
+	}
+}
+
+func (m *WsManager) checkServerUsageAndDeleteUnused() {
+	expireServers := make([]int64, 0)
+	for serverID, ts := range m.serverLastUseTs {
+		if time.Now().Add(-5*time.Minute).Unix() > ts {
+			expireServers = append(expireServers, serverID)
+
+			if server, exist := m.serverMap[serverID]; exist {
+
+				server.node.Close()
+				m.serverMapLock.Lock()
+				delete(m.serverMap, serverID)
+				m.serverMapLock.Unlock()
+			}
+
+		}
+	}
+	notUsedServer := make([]int64, 0)
+	for serverID := range m.serverMap {
+		if _, exist := m.serverLastUseTs[serverID]; !exist {
+			notUsedServer = append(notUsedServer, serverID)
+		}
+	}
+	for _, serverID := range expireServers {
+		delete(m.serverLastUseTs, serverID)
+	}
+	for _, serverID := range notUsedServer {
+		if server, exist := m.serverMap[serverID]; exist {
+			server.node.Close()
+			m.serverMapLock.Lock()
+			delete(m.serverMap, serverID)
+			m.serverMapLock.Unlock()
+		}
+	}
+}
+
+func (m *WsManager) keepAlive() {
+	keepaliveMsg := `{"id": %d,"method":"general.keeplive","params":{"expires":60,"date":"2024-02-26 19:59:33"}}`
+
+	for _, client := range m.clientMap {
+		go func(wsClient *WsClient) {
+			if wsClient == nil || !wsClient.node.connected {
+				log.Errorf("client %s is not connected", wsClient.id)
+				m.clientMapLock.Lock()
+				delete(m.clientMap, wsClient.id)
+				m.clientMapLock.Unlock()
+				return
+			}
+			msgID := m.msgIDGenerator.GetID()
+			keepaliveMsg = fmt.Sprintf(keepaliveMsg, msgID)
+			log.Infof("try to keep alive client %s, message: %s", wsClient.id, keepaliveMsg)
+
+			respCh, err := m.SendMessage(-1, wsClient.id, keepaliveMsg)
+			if err != nil {
+				log.Errorf("client: %s keepalive error: %s", wsClient.id, err.Error())
+				m.clientMapLock.Lock()
+				delete(m.clientMap, wsClient.id)
+				m.clientMapLock.Unlock()
+				return
+			}
+			timeout := time.NewTicker(10 * time.Second)
+			select {
+			case data := <-respCh:
+				log.Infof("keepalive response data: %s", string(data))
+			case <-timeout.C:
+				log.Errorf("keepalive error, response timeout")
+				m.clientMapLock.Lock()
+				wsClient.node.conn.Close()
+				delete(m.clientMap, wsClient.id)
+				m.clientMapLock.Unlock()
+			}
+		}(client)
+	}
+
 }
